@@ -52,7 +52,7 @@ def create_trainer(name, config):
     if gpu_count > 1:
         trainer = Trainer(gpus=-1,
                           accelerator='ddp',
-                          plugins=DDPPlugin(find_unused_parameters=False),
+                          plugins=DDPPlugin(find_unused_parameters=True),
                           num_sanity_val_steps=config.sanity_steps,
                           max_epochs=config.max_epoch,
                           limit_val_batches=config.val_check_percent,
