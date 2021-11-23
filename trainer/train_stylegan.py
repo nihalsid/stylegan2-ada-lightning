@@ -19,9 +19,6 @@ from model.loss import PathLengthPenalty, compute_gradient_penalty
 from trainer import create_trainer
 
 
-from util.misc import print_module_summary
-
-
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
@@ -123,7 +120,7 @@ class StyleGAN2Trainer(pl.LightningModule):
     def execute_ada_heuristics(self):
         if (self.global_step + 1) % self.config.ada_interval == 0:
             self.augment_pipe.heuristic_update()
-        self.log("aug_p", self.augment_pipe.p, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
+        self.log("aug_p", self.augment_pipe.p.item(), on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
 
     def validation_step(self, batch, batch_idx):
         pass
@@ -139,8 +136,8 @@ class StyleGAN2Trainer(pl.LightningModule):
         for iter_idx, batch in enumerate(self.val_dataloader()):
             for batch_idx in range(batch['image'].shape[0]):
                 save_image(batch['image'][batch_idx], odir_real / f"{iter_idx}_{batch_idx}.jpg", value_range=(-1, 1), normalize=True)
-        fid_score = fid.compute_fid(odir_real, odir_fake)
-        kid_score = fid.compute_kid(odir_real, odir_fake)
+        fid_score = fid.compute_fid(odir_real, odir_fake, device=self.device)
+        kid_score = fid.compute_kid(odir_real, odir_fake, device=self.device)
         self.log(f"fid", fid_score, on_step=False, on_epoch=True, prog_bar=False, logger=True, rank_zero_only=True)
         self.log(f"kid", kid_score, on_step=False, on_epoch=True, prog_bar=False, logger=True, rank_zero_only=True)
         print(f'FID: {fid_score:.3f} , KID: {kid_score:.3f}')

@@ -190,9 +190,31 @@ class MappingNetwork(torch.nn.Module):
         return x
 
 
+def test_generator():
+    import time
+    batch_size = 16
+    G = Generator(512, 512, 2, 64, 3).cuda()
+    for batch_idx in range(16):
+        # sanity test forward pass
+        z = torch.randn(batch_size, 512).to(torch.device("cuda:0"))
+        w = G.mapping(z)
+        t0 = time.time()
+        fake = G.synthesis(w)
+        print('Time for fake:', time.time() - t0, ', shape:', fake.shape)
+        # sanity test backwards
+        loss = torch.abs(fake - torch.rand_like(fake)).mean()
+        t0 = time.time()
+        loss.backward()
+        print('Time for backwards:', time.time() - t0)
+        print('backwards done')
+        # break
+
+
 if __name__ == '__main__':
     from util.misc import print_model_parameter_count, print_module_summary
 
     model = Generator(512, 512, 2, 64, 3)
     print_module_summary(model, (torch.randn((16, 512)), ))
     print_model_parameter_count(model)
+
+    test_generator()
