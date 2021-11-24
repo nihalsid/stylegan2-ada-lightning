@@ -74,11 +74,11 @@ class AugmentPipe(torch.nn.Module):
         super().__init__()
 
         self.register_buffer('p', torch.ones([1]) * start_p)  # Overall multiplier for augmentation probability.
-        self.p_real_signs = MeanMetric()
+        self.p_real_signs = MeanMetric(dist_sync_on_step=True)
 
         self.ada_target = target
-        self.batch_size = interval
-        self.ada_interval = batch_size
+        self.batch_size = batch_size
+        self.ada_interval = interval
         self.ada_kimg = 500
 
         # Pixel blitting.

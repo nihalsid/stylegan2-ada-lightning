@@ -32,7 +32,7 @@ class StyleGAN2Trainer(pl.LightningModule):
         self.config = config
         self.G = Generator(config.latent_dim, config.latent_dim, config.num_mapping_layers, config.image_size, 3, synthesis_layer=config.generator)
         self.D = Discriminator(config.image_size, 3)
-        self.augment_pipe = AugmentPipe(config.ada_start_p, config.ada_target, config.ada_interval, config.ada_fixed, config.batch_size)
+        self.augment_pipe = AugmentPipe(config.ada_start_p, config.ada_target, config.ada_interval, config.ada_fixed, config.batch_size * torch.cuda.device_count())
         # print_module_summary(self.G, (torch.zeros(self.config.batch_size, self.config.latent_dim), ))
         # print_module_summary(self.D, (torch.zeros(self.config.batch_size, 3, config.image_size, config.image_size), ))
         self.grid_z = torch.randn(config.num_eval_images, self.config.latent_dim)
@@ -71,16 +71,14 @@ class StyleGAN2Trainer(pl.LightningModule):
             fake, w = self.forward()
             plp = self.path_length_penalty(fake, w)
             if not torch.isnan(plp):
-                gen_loss = self.config.lambda_plp * plp * self.config.lazy_path_penalty_interval
-                log_gen_loss += gen_loss.item()
+                plp_loss = self.config.lambda_plp * plp * self.config.lazy_path_penalty_interval
                 self.log("rPLP", plp, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
-                gen_loss.backward()
+                plp_loss.backward()
                 g_opt.step()
 
         # torch.nn.utils.clip_grad_norm_(self.G.parameters(), max_norm=1.0)
 
         self.log("G", log_gen_loss, on_step=True, on_epoch=False, prog_bar=True, logger=True, sync_dist=True)
-        self.ema.update(self.G.parameters())
 
         # optimize discriminator
 
@@ -110,12 +108,13 @@ class StyleGAN2Trainer(pl.LightningModule):
             batch["image"].requires_grad_()
             p_real = self.D(self.augment_pipe(batch["image"], disable_grid_sampling=True))
             gp = compute_gradient_penalty(batch["image"], p_real)
-            disc_loss = self.config.lambda_gp * gp * self.config.lazy_gradient_penalty_interval
-            disc_loss.backward()
+            gp_loss = self.config.lambda_gp * gp * self.config.lazy_gradient_penalty_interval
+            gp_loss.backward()
             d_opt.step()
             self.log("rGP", gp, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
 
         self.execute_ada_heuristics()
+        self.ema.update(self.G.parameters())
 
     def execute_ada_heuristics(self):
         if (self.global_step + 1) % self.config.ada_interval == 0:
