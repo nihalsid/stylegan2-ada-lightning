@@ -32,9 +32,7 @@ class StyleGAN2Trainer(pl.LightningModule):
         self.config = config
         self.G = Generator(config.latent_dim, config.latent_dim, config.num_mapping_layers, config.image_size, 3, synthesis_layer=config.generator)
         self.D = Discriminator(config.image_size, 3)
-        self.augment_pipe = AugmentPipe(config.ada_start_p, config.ada_target, config.ada_interval, config.ada_fixed, config.batch_size * torch.cuda.device_count())
-        # print_module_summary(self.G, (torch.zeros(self.config.batch_size, self.config.latent_dim), ))
-        # print_module_summary(self.D, (torch.zeros(self.config.batch_size, 3, config.image_size, config.image_size), ))
+        self.augment_pipe = AugmentPipe(config.ada_start_p, config.ada_target, config.ada_interval, config.ada_fixed, config.batch_size)
         self.grid_z = torch.randn(config.num_eval_images, self.config.latent_dim)
         self.train_set = ImageDataset(config.dataset_path, config.image_size)
         self.val_set = ImageDataset(config.dataset_path, config.image_size, config.num_eval_images)
@@ -54,64 +52,78 @@ class StyleGAN2Trainer(pl.LightningModule):
         return fake, w
 
     def training_step(self, batch, batch_idx):
+        total_acc_steps = self.config.batch_size // self.config.batch_gpu
         g_opt, d_opt = self.optimizers()
+
         # optimize generator
-
         g_opt.zero_grad(set_to_none=True)
-        fake, w = self.forward()
-        p_fake = self.D(self.augment_pipe(fake))
-
-        gen_loss = torch.nn.functional.softplus(-p_fake).mean()
-        gen_loss.backward()
-        log_gen_loss = gen_loss.item()
+        log_gen_loss = torch.tensor(0, dtype=torch.float32, device=self.device)
+        for acc_step in range(total_acc_steps):
+            fake, w = self.forward()
+            p_fake = self.D(self.augment_pipe(fake))
+            gen_loss = torch.nn.functional.softplus(-p_fake).mean()
+            gen_loss.backward()
+            log_gen_loss += gen_loss.detach()
         g_opt.step()
+        log_gen_loss /= total_acc_steps
+        self.log("G", log_gen_loss, on_step=True, on_epoch=False, prog_bar=True, logger=True, sync_dist=True)
 
         if self.global_step > self.config.lazy_path_penalty_after and (self.global_step + 1) % self.config.lazy_path_penalty_interval == 0:
             g_opt.zero_grad(set_to_none=True)
-            fake, w = self.forward()
-            plp = self.path_length_penalty(fake, w)
-            if not torch.isnan(plp):
-                plp_loss = self.config.lambda_plp * plp * self.config.lazy_path_penalty_interval
-                self.log("rPLP", plp, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
-                plp_loss.backward()
-                g_opt.step()
+            log_plp_loss = torch.tensor(0, dtype=torch.float32, device=self.device)
+            for acc_step in range(total_acc_steps):
+                fake, w = self.forward()
+                plp = self.path_length_penalty(fake, w)
+                if not torch.isnan(plp):
+                    plp_loss = self.config.lambda_plp * plp * self.config.lazy_path_penalty_interval
+                    plp_loss.backward()
+                    log_plp_loss += plp.detach()
+            g_opt.step()
+            log_plp_loss /= total_acc_steps
+            self.log("rPLP", log_plp_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
 
         # torch.nn.utils.clip_grad_norm_(self.G.parameters(), max_norm=1.0)
 
-        self.log("G", log_gen_loss, on_step=True, on_epoch=False, prog_bar=True, logger=True, sync_dist=True)
-
         # optimize discriminator
-
         d_opt.zero_grad(set_to_none=True)
+        log_real_loss = torch.tensor(0, dtype=torch.float32, device=self.device)
+        log_fake_loss = torch.tensor(0, dtype=torch.float32, device=self.device)
+        batch_image = batch["image"].split(self.config.batch_gpu)
+        for acc_step in range(total_acc_steps):
+            fake, _ = self.forward()
+            p_fake = self.D(self.augment_pipe(fake.detach()))
+            fake_loss = torch.nn.functional.softplus(p_fake).mean()
+            fake_loss.backward()
+            log_fake_loss += fake_loss.detach()
 
-        fake, _ = self.forward()
-        p_fake = self.D(self.augment_pipe(fake.detach()))
-        fake_loss = torch.nn.functional.softplus(p_fake).mean()
-        fake_loss.backward()
-
-        p_real = self.D(self.augment_pipe(batch["image"]))
-        self.augment_pipe.accumulate_real_sign(p_real.sign().detach())
-
-        # Get discriminator loss
-        real_loss = torch.nn.functional.softplus(-p_real).mean()
-        real_loss.backward()
+            p_real = self.D(self.augment_pipe(batch_image[acc_step]))
+            self.augment_pipe.accumulate_real_sign(p_real.sign().detach())
+            real_loss = torch.nn.functional.softplus(-p_real).mean()
+            real_loss.backward()
+            log_real_loss += real_loss.detach()
 
         d_opt.step()
-
-        self.log("D_real", real_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
-        self.log("D_fake", fake_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
-        disc_loss = real_loss + fake_loss
+        log_real_loss /= total_acc_steps
+        log_fake_loss /= total_acc_steps
+        self.log("D_real", log_real_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
+        self.log("D_fake", log_fake_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
+        disc_loss = log_real_loss + log_fake_loss
         self.log("D", disc_loss, on_step=True, on_epoch=False, prog_bar=True, logger=True, sync_dist=True)
 
         if (self.global_step + 1) % self.config.lazy_gradient_penalty_interval == 0:
             d_opt.zero_grad(set_to_none=True)
-            batch["image"].requires_grad_()
-            p_real = self.D(self.augment_pipe(batch["image"], disable_grid_sampling=True))
-            gp = compute_gradient_penalty(batch["image"], p_real)
-            gp_loss = self.config.lambda_gp * gp * self.config.lazy_gradient_penalty_interval
-            gp_loss.backward()
+            log_gp_loss = torch.tensor(0, dtype=torch.float32, device=self.device)
+            batch_image = batch["image"].split(self.config.batch_gpu)
+            for acc_step in range(total_acc_steps):
+                batch_image[acc_step].requires_grad_(True)
+                p_real = self.D(self.augment_pipe(batch_image[acc_step], disable_grid_sampling=True))
+                gp = compute_gradient_penalty(batch_image[acc_step], p_real)
+                gp_loss = self.config.lambda_gp * gp * self.config.lazy_gradient_penalty_interval
+                gp_loss.backward()
+                log_gp_loss += gp.detach()
             d_opt.step()
-            self.log("rGP", gp, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
+            log_gp_loss /= total_acc_steps
+            self.log("rGP", log_gp_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, sync_dist=True)
 
         self.execute_ada_heuristics()
         self.ema.update(self.G.parameters())
@@ -153,7 +165,7 @@ class StyleGAN2Trainer(pl.LightningModule):
             return w
 
     def latent(self, limit_batch_size=False):
-        batch_size = self.config.batch_size if not limit_batch_size else self.config.batch_size // self.path_length_penalty.pl_batch_shrink
+        batch_size = self.config.batch_gpu if not limit_batch_size else self.config.batch_gpu // self.path_length_penalty.pl_batch_shrink
         z1 = torch.randn(batch_size, self.config.latent_dim).to(self.device)
         z2 = torch.randn(batch_size, self.config.latent_dim).to(self.device)
         return z1, z2
@@ -162,17 +174,17 @@ class StyleGAN2Trainer(pl.LightningModule):
         return DataLoader(self.train_set, self.config.batch_size, shuffle=True, pin_memory=True, drop_last=True, num_workers=self.config.num_workers)
 
     def val_dataloader(self):
-        return DataLoader(self.val_set, self.config.batch_size, shuffle=True, drop_last=True, num_workers=self.config.num_workers)
+        return DataLoader(self.val_set, self.config.batch_gpu, shuffle=True, drop_last=True, num_workers=self.config.num_workers)
 
     def export_images(self, prefix, output_dir_vis, output_dir_fid):
         vis_generated_images = []
-        for iter_idx, latent in enumerate(self.grid_z.split(self.config.batch_size)):
+        for iter_idx, latent in enumerate(self.grid_z.split(self.config.batch_gpu)):
             latent = latent.to(self.device)
             fake = self.G(latent, noise_mode='const').cpu()
             if output_dir_fid is not None:
                 for batch_idx in range(fake.shape[0]):
                     save_image(fake[batch_idx], output_dir_fid / f"{iter_idx}_{batch_idx}.jpg", value_range=(-1, 1), normalize=True)
-            if iter_idx < self.config.num_vis_images // self.config.batch_size:
+            if iter_idx < self.config.num_vis_images // self.config.batch_gpu:
                 vis_generated_images.append(fake)
         torch.cuda.empty_cache()
         vis_generated_images = torch.cat(vis_generated_images, dim=0)
