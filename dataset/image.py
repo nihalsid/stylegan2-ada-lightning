@@ -8,7 +8,7 @@ class ImageDataset(torch.utils.data.Dataset):
 
     def __init__(self, path, image_size, size=None):
         super().__init__()
-        self.paths = [p for p in Path(path).iterdir() if p.name.endswith('.png')]
+        self.paths = [p for p in Path(path).iterdir() if p.name.endswith('.png') or p.name.endswith('.jpg')]
         self.size = min(size if size is not None else len(self.paths), len(self.paths))
         self.transform = torchvision.transforms.Compose([
             torchvision.transforms.Resize(image_size),

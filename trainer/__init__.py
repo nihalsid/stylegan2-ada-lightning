@@ -39,7 +39,7 @@ def create_trainer(name, config):
 
     # noinspection PyUnusedLocal
     filesystem_logger = FilesystemLogger(config)
-    logger = WandbLogger(project=f'{name}{config.suffix}[{ds_name}]',
+    logger = WandbLogger(project=f'{name}{config.suffix}',
                          name=config.experiment,
                          id=config.experiment,
                          settings=wandb.Settings(start_method='thread'))
