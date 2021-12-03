@@ -1,7 +1,6 @@
 torch
 ballpark
 argparse
-yaml
 pyyaml
 typing
 omegaconf
