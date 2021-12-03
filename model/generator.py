@@ -25,12 +25,13 @@ class SynthesisNetwork(torch.nn.Module):
 
     def __init__(self, w_dim, img_resolution, img_channels, channel_base=16384, channel_max=512, synthesis_layer='stylegan2'):
         super().__init__()
-        self.num_ws = 10
+
         self.w_dim = w_dim
         self.img_resolution = img_resolution
         self.img_resolution_log2 = int(np.log2(img_resolution))
         self.img_channels = img_channels
         self.block_resolutions = [2 ** i for i in range(2, self.img_resolution_log2 + 1)]
+        self.num_ws = 2 * (len(self.block_resolutions) + 1)
         channels_dict = {res: min(channel_base // res, channel_max) for res in self.block_resolutions}
         self.blocks = torch.nn.ModuleList()
         self.first_block = SynthesisPrologue(channels_dict[self.block_resolutions[0]], w_dim=w_dim,
@@ -43,7 +44,7 @@ class SynthesisNetwork(torch.nn.Module):
             self.blocks.append(block)
 
     def forward(self, ws, noise_mode='random'):
-        split_ws = [ws[:, 0:2, :], ws[:, 1:4, :], ws[:, 3:6, :], ws[:, 5:8, :], ws[:, 7:10, :]]
+        split_ws = [ws[:, 0:2, :]] + [ws[:, 2 * n + 1: 2 * n + 4, :] for n in range(len(self.block_resolutions))]
         x, img = self.first_block(split_ws[0], noise_mode)
         for i in range(len(self.block_resolutions) - 1):
             x, img = self.blocks[i](x, img, split_ws[i + 1], noise_mode)
