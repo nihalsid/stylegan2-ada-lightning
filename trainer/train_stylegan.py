@@ -62,7 +62,7 @@ class StyleGAN2Trainer(pl.LightningModule):
             fake, w = self.forward()
             p_fake = self.D(self.augment_pipe(fake))
             gen_loss = torch.nn.functional.softplus(-p_fake).mean()
-            gen_loss.backward()
+            self.manual_backward(gen_loss)
             log_gen_loss += gen_loss.detach()
         g_opt.step()
         log_gen_loss /= total_acc_steps
@@ -76,7 +76,7 @@ class StyleGAN2Trainer(pl.LightningModule):
                 plp = self.path_length_penalty(fake, w)
                 if not torch.isnan(plp):
                     plp_loss = self.config.lambda_plp * plp * self.config.lazy_path_penalty_interval
-                    plp_loss.backward()
+                    self.manual_backward(plp_loss)
                     log_plp_loss += plp.detach()
             g_opt.step()
             log_plp_loss /= total_acc_steps
@@ -93,13 +93,13 @@ class StyleGAN2Trainer(pl.LightningModule):
             fake, _ = self.forward()
             p_fake = self.D(self.augment_pipe(fake.detach()))
             fake_loss = torch.nn.functional.softplus(p_fake).mean()
-            fake_loss.backward()
+            self.manual_backward(fake_loss)
             log_fake_loss += fake_loss.detach()
 
             p_real = self.D(self.augment_pipe(batch_image[acc_step]))
             self.augment_pipe.accumulate_real_sign(p_real.sign().detach())
             real_loss = torch.nn.functional.softplus(-p_real).mean()
-            real_loss.backward()
+            self.manual_backward(real_loss)
             log_real_loss += real_loss.detach()
 
         d_opt.step()
@@ -119,7 +119,7 @@ class StyleGAN2Trainer(pl.LightningModule):
                 p_real = self.D(self.augment_pipe(batch_image[acc_step], disable_grid_sampling=True))
                 gp = compute_gradient_penalty(batch_image[acc_step], p_real)
                 gp_loss = self.config.lambda_gp * gp * self.config.lazy_gradient_penalty_interval
-                gp_loss.backward()
+                self.manual_backward(gp_loss)
                 log_gp_loss += gp.detach()
             d_opt.step()
             log_gp_loss /= total_acc_steps
