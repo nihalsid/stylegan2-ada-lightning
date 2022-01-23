@@ -10,5 +10,6 @@ pillow
 wandb
 hydra
 pytorch-lightning
-
-
+yaml
+torchmetrics
+timm
