@@ -1,3 +1,6 @@
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy('file_system')    # a fix for the "OSError: too many files" exception
+
 import math
 import shutil
 from pathlib import Path
