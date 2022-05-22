@@ -144,9 +144,9 @@ class StyleGAN2Trainer(pl.LightningModule):
         odir_real, odir_fake, odir_samples = self.create_directories()
         self.export_images("", odir_samples, None)
         self.ema.store(self.G.parameters())
-        self.ema.copy_to([p for p in self.G.parameters() if p.requires_grad])
+        self.ema.copy_to(self.G.parameters())
         self.export_images("ema_", odir_samples, odir_fake)
-        self.ema.restore([p for p in self.G.parameters() if p.requires_grad])
+        self.ema.restore(self.G.parameters())
         for iter_idx, batch in enumerate(self.val_dataloader()):
             for batch_idx in range(batch['image'].shape[0]):
                 save_image(batch['image'][batch_idx], odir_real / f"{iter_idx}_{batch_idx}.jpg", value_range=(-1, 1), normalize=True)
