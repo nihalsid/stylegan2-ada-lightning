@@ -5,11 +5,13 @@ from typing import Dict, Optional, Union
 
 import yaml
 from omegaconf import OmegaConf
-from pytorch_lightning.loggers import LightningLoggerBase
-from pytorch_lightning.loggers.base import rank_zero_experiment, DummyExperiment
+# from pytorch_lightning.loggers import LightningLoggerBase    # for pytorch_lightning < 1.9
+from pytorch_lightning.loggers.logger import Logger                   # for pytorch_lightning >= 1.9
+# from pytorch_lightning.loggers.base import rank_zero_experiment, DummyExperiment    # for pytorch_lightning ~< 1.9
+from pytorch_lightning.loggers.logger import rank_zero_experiment, DummyExperiment    # for pytorch_lightning ~< 1.9
 
 
-class FilesystemLogger(LightningLoggerBase):
+class FilesystemLogger(Logger):
 
     @property
     def version(self) -> Union[int, str]:
