@@ -1,3 +1,12 @@
+import sys
+sys.path.append('.')
+sys.path.append('..')    # NOTE: careful!
+
+import os
+# os.environ['LD_LIBRARY_PATH'] = '/rhome/asevastopolsky:' + os.environ['LD_LIBRARY_PATH']
+os.environ['CUDA_HOME'] = '/usr/local/remote/cuda-11.2'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+
 import torch.multiprocessing
 torch.multiprocessing.set_sharing_strategy('file_system')    # a fix for the "OSError: too many files" exception
 
@@ -37,8 +46,10 @@ class StyleGAN2Trainer(pl.LightningModule):
         self.D = Discriminator(config.image_size, 3)
         self.augment_pipe = AugmentPipe(config.ada_start_p, config.ada_target, config.ada_interval, config.ada_fixed, config.batch_size)
         self.grid_z = torch.randn(config.num_eval_images, self.config.latent_dim)
-        self.train_set = ImageDataset(config.dataset_path, config.image_size)
-        self.val_set = ImageDataset(config.dataset_path, config.image_size, config.num_eval_images)
+        dataset_path = None if not hasattr(config, 'dataset_path') else config.dataset_path
+        img_list = None if not hasattr(config, 'img_list') else config.img_list
+        self.train_set = ImageDataset(dataset_path, config.image_size, list_fn=img_list)
+        self.val_set = ImageDataset(dataset_path, config.image_size, config.num_eval_images, list_fn=img_list)
         self.automatic_optimization = False
         self.path_length_penalty = PathLengthPenalty(0.01, 2)
         self.ema = None
@@ -140,13 +151,13 @@ class StyleGAN2Trainer(pl.LightningModule):
         pass
 
     @rank_zero_only
-    def validation_epoch_end(self, _val_step_outputs):
+    def on_validation_epoch_end(self, *args, **kwargs):
         odir_real, odir_fake, odir_samples = self.create_directories()
         self.export_images("", odir_samples, None)
         self.ema.store(self.G.parameters())
-        self.ema.copy_to(self.G.parameters())
+        self.ema.copy_to([p for p in self.G.parameters() if p.requires_grad])
         self.export_images("ema_", odir_samples, odir_fake)
-        self.ema.restore(self.G.parameters())
+        self.ema.restore([p for p in self.G.parameters() if p.requires_grad])
         for iter_idx, batch in enumerate(self.val_dataloader()):
             for batch_idx in range(batch['image'].shape[0]):
                 save_image(batch['image'][batch_idx], odir_real / f"{iter_idx}_{batch_idx}.jpg", value_range=(-1, 1), normalize=True)
@@ -214,7 +225,8 @@ class StyleGAN2Trainer(pl.LightningModule):
 def main(config):
     trainer = create_trainer("StyleGAN2", config)
     model = StyleGAN2Trainer(config)
-    trainer.fit(model)
+    trainer.fit(model,
+                ckpt_path=config.resume)
 
 
 if __name__ == '__main__':

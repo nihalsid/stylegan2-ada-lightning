@@ -15,6 +15,7 @@ Configuration can be overriden with command line flags.
 | Key | Description | Default |
 | ----|-------------|---------|
 |`dataset_path`| Directory with training images|`data/ffhq`|
+|`img_list`| Path to the .txt with a list of images, useful when you have many files (optional; if provided, used instead of dataset_path)|`null`|
 |`experiment`| Experiment name used for logs |`fast_dev`|
 |`wandb_main`| If false, results logged to "<project>-dev" wandb project (for dev logs)|`False`|
 |`num_mapping_layers`| Number of layers in the mapping network |2|
@@ -38,6 +39,7 @@ Configuration can be overriden with command line flags.
 |`val_check_interval`| Epoch interval for evaluating metrics and saving generated samples |1|
 |`resume`| Resume checkpoint |`null`|
 
+The code has been tested with PyTorch 2.0.0+cu118, PyTorch Lightning 2.0.6, CUDA 11.8, Python 3.8.5.
 
 References
 ==========
